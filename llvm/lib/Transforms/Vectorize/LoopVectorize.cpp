@@ -10054,6 +10054,10 @@ bool LoopVectorizePass::processLoop(Loop *L) {
   VectorizationFactor EpilogueVF =
       LVP.selectEpilogueVectorizationFactor(VF.Width, IC);
   if (EpilogueVF.Width.isVector()) {
+    LLVM_DEBUG(dbgs() << "LV: Splitting loop into vectorized main loop (VF="
+                      << VF.Width << ", IC=" << IC
+                      << ") and vectorized epilogue (VF=" << EpilogueVF.Width
+                      << ")\n");
     std::unique_ptr<VPlan> BestMainPlan(BestPlan.duplicate());
 
     // The first pass vectorizes the main loop and creates a scalar epilogue
@@ -10083,6 +10087,15 @@ bool LoopVectorizePass::processLoop(Loop *L) {
                               Checks, InstsToMove);
     ++LoopsEpilogueVectorized;
   } else {
+    LLVM_DEBUG({
+      if (CM.foldTailByMasking()) {
+        dbgs() << "LV: Vectorizing loop (VF=" << VF.Width << ", IC=" << IC
+               << ") with tail folding\n";
+      } else {
+        dbgs() << "LV: Splitting loop into vectorized main loop (VF="
+               << VF.Width << ", IC=" << IC << ") and scalar epilogue\n";
+      }
+    });
     InnerLoopVectorizer LB(L, PSE, LI, DT, TTI, AC, VF.Width, IC, &CM, Checks,
                            BestPlan);
     // TODO: Move to general VPlan pipeline once epilogue loops are also
