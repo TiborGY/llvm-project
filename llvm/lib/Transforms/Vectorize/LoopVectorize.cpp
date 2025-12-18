@@ -816,17 +816,23 @@ static void reportVectorizationInfo(const StringRef Msg, const StringRef ORETag,
 /// Report successful vectorization of the loop. In case an outer loop is
 /// vectorized, prepend "outer" to the vectorization remark.
 static void reportVectorization(OptimizationRemarkEmitter *ORE, Loop *TheLoop,
-                                VectorizationFactor VF, unsigned IC) {
+                                VectorizationFactor VF, unsigned IC,
+                                ScalarEvolution &SE) {
   LLVM_DEBUG(debugVectorizationMessage(
       "Vectorizing: ", TheLoop->isInnermost() ? "innermost loop" : "outer loop",
       nullptr));
   StringRef LoopType = TheLoop->isInnermost() ? "" : "outer ";
+  ElementCount TC = getSmallConstantTripCount(&SE, TheLoop);
   ORE->emit([&]() {
-    return OptimizationRemark(LV_NAME, "Vectorized", TheLoop->getStartLoc(),
-                              TheLoop->getHeader())
-           << "vectorized " << LoopType << "loop (vectorization width: "
-           << ore::NV("VectorizationFactor", VF.Width)
-           << ", interleaved count: " << ore::NV("InterleaveCount", IC) << ")";
+    OptimizationRemark R(LV_NAME, "Vectorized", TheLoop->getStartLoc(),
+                         TheLoop->getHeader());
+    R << "vectorized " << LoopType << "loop (vectorization width: "
+      << ore::NV("VectorizationFactor", VF.Width)
+      << ", interleaved count: " << ore::NV("InterleaveCount", IC);
+    if (TC.isNonZero())
+      R << ", known trip count: " << ore::NV("TripCount", TC);
+    R << ")";
+    return R;
   });
 }
 
@@ -9049,7 +9055,7 @@ static bool processLoopInVPlanNativePath(
     LVP.executePlan(VF.Width, /*UF=*/1, BestPlan, LB, DT, false);
   }
 
-  reportVectorization(ORE, L, VF, 1);
+  reportVectorization(ORE, L, VF, 1, *PSE.getSE());
 
   assert(!verifyFunction(*L->getHeader()->getParent(), &dbgs()));
   return true;
@@ -10041,7 +10047,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     });
   } else {
     // Report the vectorization decision.
-    reportVectorization(ORE, L, VF, IC);
+    reportVectorization(ORE, L, VF, IC, *PSE.getSE());
   }
   if (ORE->allowExtraAnalysis(LV_NAME))
     checkMixedPrecision(L, ORE);
@@ -10055,7 +10061,7 @@ bool LoopVectorizePass::processLoop(Loop *L) {
       LVP.selectEpilogueVectorizationFactor(VF.Width, IC);
   if (EpilogueVF.Width.isVector()) {
     LLVM_DEBUG(dbgs() << "LV: Splitting loop into vectorized main loop (VF="
-                      << VF.Width << ", IC=" << IC
+                      << VF.Width << ", UF=" << IC
                       << ") and vectorized epilogue (VF=" << EpilogueVF.Width
                       << ")\n");
     std::unique_ptr<VPlan> BestMainPlan(BestPlan.duplicate());
@@ -10088,13 +10094,12 @@ bool LoopVectorizePass::processLoop(Loop *L) {
     ++LoopsEpilogueVectorized;
   } else {
     LLVM_DEBUG({
-      if (CM.foldTailByMasking()) {
-        dbgs() << "LV: Vectorizing loop (VF=" << VF.Width << ", IC=" << IC
+      if (CM.foldTailByMasking())
+        dbgs() << "LV: Vectorizing loop (VF=" << VF.Width << ", UF=" << IC
                << ") with tail folding\n";
-      } else {
+      else
         dbgs() << "LV: Splitting loop into vectorized main loop (VF="
-               << VF.Width << ", IC=" << IC << ") and scalar epilogue\n";
-      }
+               << VF.Width << ", UF=" << IC << ") and scalar epilogue\n";
     });
     InnerLoopVectorizer LB(L, PSE, LI, DT, TTI, AC, VF.Width, IC, &CM, Checks,
                            BestPlan);
