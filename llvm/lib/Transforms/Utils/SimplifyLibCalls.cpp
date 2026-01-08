@@ -2812,6 +2812,22 @@ Value *LibCallSimplifier::optimizeSqrt(CallInst *CI, IRBuilderBase &B) {
   Module *M = CI->getModule();
   Function *Callee = CI->getCalledFunction();
   Value *Ret = nullptr;
+
+  // If the argument is known to be non-negative, sqrt cannot set errno and we
+  // can convert the library call to the intrinsic.
+  if (Callee->getIntrinsicID() != Intrinsic::sqrt && !CI->doesNotAccessMemory()) {
+    SimplifyQuery SQ(DL, TLI, DT, AC, CI, true, true, DC);
+    KnownFPClass Known =
+        computeKnownFPClass(CI->getArgOperand(0),
+                            KnownFPClass::OrderedLessThanZeroMask, SQ);
+    if (Known.cannotBeOrderedLessThanZero()) {
+      auto *NewSqrt =
+          B.CreateUnaryIntrinsic(Intrinsic::sqrt, CI->getArgOperand(0), CI);
+      NewSqrt->copyMetadata(*CI);
+      return copyFlags(*CI, NewSqrt);
+    }
+  }
+
   // TODO: Once we have a way (other than checking for the existince of the
   // libcall) to tell whether our target can lower @llvm.sqrt, relax the
   // condition below.
