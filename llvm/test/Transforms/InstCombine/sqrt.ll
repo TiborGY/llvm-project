@@ -77,10 +77,12 @@ define double @sqrt_call_nnan_f64(double %x) {
   ret double %sqrt
 }
 
+; sqrt(fabs(x)) - argument is always non-negative, so sqrt cannot set errno.
+; Convert to an intrinsic which is faster and allows downstream optimizations.
 define float @sqrt_call_fabs_f32(float %x) {
 ; CHECK-LABEL: @sqrt_call_fabs_f32(
 ; CHECK-NEXT:    [[A:%.*]] = call float @llvm.fabs.f32(float [[X:%.*]])
-; CHECK-NEXT:    [[SQRT:%.*]] = tail call float @sqrtf(float [[A]])
+; CHECK-NEXT:    [[SQRT:%.*]] = call float @llvm.sqrt.f32(float [[A]])
 ; CHECK-NEXT:    ret float [[SQRT]]
 ;
   %a = call float @llvm.fabs.f32(float %x)
@@ -212,9 +214,84 @@ define <2 x float> @sqrt_unary_shuffle_ops(<2 x float> %x) {
   ret <2 x float> %r
 }
 
+; sqrt(x * x) - argument is a square, always non-negative
+define double @sqrt_square(double %x) {
+; CHECK-LABEL: @sqrt_square(
+; CHECK-NEXT:    [[SQ:%.*]] = fmul double [[X:%.*]], [[X]]
+; CHECK-NEXT:    [[SQRT:%.*]] = call double @llvm.sqrt.f64(double [[SQ]])
+; CHECK-NEXT:    ret double [[SQRT]]
+;
+  %sq = fmul double %x, %x
+  %sqrt = call double @sqrt(double %sq)
+  ret double %sqrt
+}
+
+; sqrt(a*a + b*b) - sum of squares, always non-negative
+define double @sqrt_sum_of_squares(double %a, double %b) {
+; CHECK-LABEL: @sqrt_sum_of_squares(
+; CHECK-NEXT:    [[A2:%.*]] = fmul double [[A:%.*]], [[A]]
+; CHECK-NEXT:    [[B2:%.*]] = fmul double [[B:%.*]], [[B]]
+; CHECK-NEXT:    [[SUM:%.*]] = fadd double [[A2]], [[B2]]
+; CHECK-NEXT:    [[SQRT:%.*]] = call double @llvm.sqrt.f64(double [[SUM]])
+; CHECK-NEXT:    ret double [[SQRT]]
+;
+  %a2 = fmul double %a, %a
+  %b2 = fmul double %b, %b
+  %sum = fadd double %a2, %b2
+  %sqrt = call double @sqrt(double %sum)
+  ret double %sqrt
+}
+
+; sqrtf(x * x) - float version
+define float @sqrtf_square(float %x) {
+; CHECK-LABEL: @sqrtf_square(
+; CHECK-NEXT:    [[SQ:%.*]] = fmul float [[X:%.*]], [[X]]
+; CHECK-NEXT:    [[SQRT:%.*]] = call float @llvm.sqrt.f32(float [[SQ]])
+; CHECK-NEXT:    ret float [[SQRT]]
+;
+  %sq = fmul float %x, %x
+  %sqrt = call float @sqrtf(float %sq)
+  ret float %sqrt
+}
+
+; sqrt(uitofp(x)) - uitofp produces non-negative value
+define double @sqrt_uitofp(i32 %x) {
+; CHECK-LABEL: @sqrt_uitofp(
+; CHECK-NEXT:    [[F:%.*]] = uitofp i32 [[X:%.*]] to double
+; CHECK-NEXT:    [[SQRT:%.*]] = call double @llvm.sqrt.f64(double [[F]])
+; CHECK-NEXT:    ret double [[SQRT]]
+;
+  %f = uitofp i32 %x to double
+  %sqrt = call double @sqrt(double %f)
+  ret double %sqrt
+}
+
+; Negative test: unknown argument, cannot prove non-negative
+define double @sqrt_unknown(double %x) {
+; CHECK-LABEL: @sqrt_unknown(
+; CHECK-NEXT:    [[SQRT:%.*]] = call double @sqrt(double [[X:%.*]])
+; CHECK-NEXT:    ret double [[SQRT]]
+;
+  %sqrt = call double @sqrt(double %x)
+  ret double %sqrt
+}
+
+; Negative test: sitofp can be negative
+define double @sqrt_sitofp(i32 %x) {
+; CHECK-LABEL: @sqrt_sitofp(
+; CHECK-NEXT:    [[F:%.*]] = sitofp i32 [[X:%.*]] to double
+; CHECK-NEXT:    [[SQRT:%.*]] = call double @sqrt(double [[F]])
+; CHECK-NEXT:    ret double [[SQRT]]
+;
+  %f = sitofp i32 %x to double
+  %sqrt = call double @sqrt(double %f)
+  ret double %sqrt
+}
+
 declare i32 @foo(double)
-declare double @sqrt(double) readnone
+declare double @sqrt(double)
 declare float @sqrtf(float)
+declare double @llvm.fabs.f64(double)
 declare float @llvm.fabs.f32(float)
 declare double @llvm.exp.f64(double)
 declare double @llvm.sqrt.f64(double)
